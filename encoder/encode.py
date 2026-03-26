@@ -207,7 +207,6 @@ def get_resgen_protein_embeding(batch):
     return h_compose
 
 
-wrong_num = 0
 model.eval()
 
 with torch.no_grad():
@@ -238,5 +237,3 @@ with torch.no_grad():
     output = args.output_name
     with open(f'{root}/{output}.pkl', 'ab') as file:
         pickle.dump(protein_input, file)
-
-print(wrong_num)
