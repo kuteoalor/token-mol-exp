@@ -3,16 +3,17 @@
 # @Time: 2023/10/12 9:43
 # @File: ada_model.py
 import torch
-from transformers.models.gpt2.modeling_gpt2 import GPT2Attention
+from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Model
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 from transformers.models.gpt2 import GPT2LMHeadModel
+
 import torch.nn as nn
 from typing import Optional, Tuple, Union
 
 
 class CrossSelfAttention(GPT2Attention):
     def __init__(self, config, is_cross_attention=False, layer_idx=None):
-        super().__init__(config, is_cross_attention=is_cross_attention, layer_idx=layer_idx)
+        super().__init__(config, is_cross_attention, layer_idx)
 
     def forward(
             self,
@@ -25,8 +26,7 @@ class CrossSelfAttention(GPT2Attention):
             use_cache: Optional[bool] = False,
             output_attentions: Optional[bool] = False,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
-        # Keep compatibility with Token-Mol checkpoints while avoiding private
-        # GPT2Attention helpers that changed across transformers versions.
+        # todo speed this module: not do the attention with the cross part (protein part)
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
                 raise ValueError(
@@ -40,11 +40,9 @@ class CrossSelfAttention(GPT2Attention):
         else:
             query, key, value = self.c_attn(hidden_states).split(self.split_size, dim=2)
 
-        batch_size, query_len = query.shape[:2]
-        key_len = key.shape[1]
-        query = query.view(batch_size, query_len, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
-        key = key.view(batch_size, key_len, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
-        value = value.view(batch_size, key_len, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        query = self._split_heads(query, self.num_heads, self.head_dim)
+        key = self._split_heads(key, self.num_heads, self.head_dim)
+        value = self._split_heads(value, self.num_heads, self.head_dim)
 
         if layer_past is not None:
             past_key, past_value = layer_past
@@ -56,17 +54,12 @@ class CrossSelfAttention(GPT2Attention):
         else:
             present = None
 
-        attn_weights = torch.matmul(query, key.transpose(-1, -2)) / (self.head_dim ** 0.5)
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
-        attn_weights = self.attn_dropout(attn_weights)
-        if head_mask is not None:
-            attn_weights = attn_weights * head_mask
-        attn_output = torch.matmul(attn_weights, value)
+        if self.reorder_and_upcast_attn:
+            attn_output, attn_weights = self._upcast_and_reordered_attn(query, key, value, attention_mask, head_mask)
+        else:
+            attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
 
-        attn_output = attn_output.permute(0, 2, 1, 3).contiguous()
-        attn_output = attn_output.view(batch_size, query_len, self.embed_dim)
+        attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
 
@@ -74,7 +67,7 @@ class CrossSelfAttention(GPT2Attention):
         if output_attentions:
             outputs += (attn_weights,)
 
-        return outputs[0]
+        return outputs[0]  # a, present, (attentions)
 
 
 class ResidualBlock(nn.Module):

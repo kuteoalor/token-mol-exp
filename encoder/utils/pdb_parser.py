@@ -142,17 +142,17 @@ class PDBProtein(object):
 
     def to_dict_atom(self):
         return {
-            'element': np.array(self.element, dtype=np.int64),
+            'element': np.array(self.element, dtype=np.long),
             'molecule_name': self.title,
             'pos': np.array(self.pos, dtype=np.float32),
-            'is_backbone': np.array(self.is_backbone, dtype=np.bool_),
+            'is_backbone': np.array(self.is_backbone, dtype=np.bool),
             'atom_name': self.atom_name,
-            'atom_to_aa_type': np.array(self.atom_to_aa_type, dtype=np.int64)
+            'atom_to_aa_type': np.array(self.atom_to_aa_type, dtype=np.long)
         }
 
     def to_dict_residue(self):
         return {
-            'amino_acid': np.array(self.amino_acid, dtype=np.int64),
+            'amino_acid': np.array(self.amino_acid, dtype=np.long),
             'center_of_mass': np.array(self.center_of_mass, dtype=np.float32),
             'pos_CA': np.array(self.pos_CA, dtype=np.float32),
             'pos_C': np.array(self.pos_C, dtype=np.float32),

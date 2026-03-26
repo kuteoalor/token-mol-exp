@@ -32,7 +32,6 @@ class MyDataset(Dataset):
 
 def setup_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pretrain_path', default='./Pretrained_model', type=str, help='path to pretrained GPT2 folder')
     parser.add_argument('--model_path', default='./Trained_model/pocket_generation.pt', type=str, help='')
     parser.add_argument('--vocab_path', default="./data/torsion_version/torsion_voc_pocket.csv", type=str, help='')
     parser.add_argument('--protein_path', default='./example/ARA2A.pkl', type=str, help='')
@@ -63,17 +62,6 @@ def predict(model, tokenizer, batch_size, single_pocket,
     max_length = 195
     input_ids = []
     input_ids.extend(tokenizer.encode(text, add_special_tokens=False))
-    output_vocab_size = model.lm_head.out_features
-    input_vocab_size = model.mol_model.transformer.wte.num_embeddings
-    safe_vocab_size = min(output_vocab_size, input_vocab_size)
-    unk_id = tokenizer.unk_token_id if tokenizer.unk_token_id is not None else 0
-    unk_id = min(max(int(unk_id), 0), input_vocab_size - 1)
-
-    if len(input_ids) == 0:
-        raise ValueError("Prompt produced an empty token list.")
-    if max(input_ids) >= input_vocab_size or min(input_ids) < 0:
-        input_ids = [tok if 0 <= tok < input_vocab_size else unk_id for tok in input_ids]
-
     input_length = len(input_ids)
 
     input_tensor = torch.zeros(batch_size, input_length).long()
@@ -81,49 +69,27 @@ def predict(model, tokenizer, batch_size, single_pocket,
 
     Seq_list = []
 
-    eos_token = '<|endofmask|>'
-    eos_id = tokenizer.convert_tokens_to_ids(eos_token)
-    if eos_id is None or eos_id == tokenizer.unk_token_id:
-        eos_ids = tokenizer.encode(eos_token, add_special_tokens=False)
-        if len(eos_ids) == 0:
-            raise ValueError(f"Could not resolve EOS token id for {eos_token}")
-        # Some tokenizers may return repeated ids for a single special token string.
-        eos_id = eos_ids[0]
-    if eos_id < 0 or eos_id >= input_vocab_size:
-        eos_id = unk_id
-    finished = torch.zeros(batch_size, 1, dtype=torch.bool, device=device)
+    finished = torch.zeros(batch_size, 1).byte().to(device)
 
     protein_batch = torch.tensor(protein_batch, dtype=torch.float32)
     protein_batch = protein_batch.to(device)
     protein_batch = protein_batch.repeat(batch_size, 1, 1)
     for i in range(max_length):
-        # Guard against out-of-range token ids before embedding lookup.
-        if input_tensor.min().item() < 0 or input_tensor.max().item() >= input_vocab_size:
-            input_tensor = input_tensor.clamp(min=0, max=input_vocab_size - 1)
         inputs = input_tensor.to(device)
         outputs = model(inputs, protein_batch)
-        step_logits = outputs.logits[:, -1, :safe_vocab_size]
-        step_logits = torch.nan_to_num(step_logits, nan=0.0, posinf=1e4, neginf=-1e4)
-        probs = F.softmax(step_logits.float(), dim=1)
-        probs = torch.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0)
-        probs_sum = probs.sum(dim=1, keepdim=True)
+        logits = outputs.logits
+        logits = F.softmax(logits[:, -1, :], dim=1)
 
-        if (probs_sum <= 0).any():
-            last_token_id = torch.argmax(step_logits, dim=1, keepdim=True)
-        else:
-            probs = probs / probs_sum
-            # Sampling on CPU avoids CUDA-side assert failures from multinomial kernels.
-            last_token_id = torch.multinomial(probs.detach().cpu(), 1).to(device)
-        last_token_id = last_token_id.clamp(min=0, max=input_vocab_size - 1)
+        last_token_id = torch.multinomial(logits, 1)
         #last_token_id = torch.argmax(logits,1).view(-1,1)
 
-        EOS_sampled = (last_token_id == eos_id)
-        finished = finished | EOS_sampled
-        if finished.all():
+        EOS_sampled = (last_token_id == tokenizer.encode('<|endofmask|>', add_special_tokens=False))
+        finished = torch.ge(finished + EOS_sampled, 1)
+        if torch.prod(finished) == 1:
             print('End')
             break
 
-        last_token = tokenizer.convert_ids_to_tokens(last_token_id.squeeze(-1).detach().cpu().tolist())
+        last_token = tokenizer.convert_ids_to_tokens(last_token_id)
         input_tensor = torch.cat((input_tensor, last_token_id.detach().to('cpu')), 1)
 
         Seq_list.append(last_token)
@@ -140,28 +106,23 @@ def get_parameter_number(model):
 if __name__ == '__main__':
     args = setup_args()
     model_path, protein_path = args.model_path, args.protein_path
+
     tokenizer = ExpressionBertTokenizer.from_pretrained(args.vocab_path)
-    model = Token3D(pretrain_path=args.pretrain_path, config=Ada_config)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    try:
-        state_dict = torch.load(args.model_path, map_location=device, weights_only=False)
-    except TypeError:
-        state_dict = torch.load(args.model_path, map_location=device)
-    state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-    if unexpected_keys:
-        print(f"Ignoring {len(unexpected_keys)} unexpected checkpoint keys (e.g. {unexpected_keys[:2]})")
-    if missing_keys:
-        print(f"Missing {len(missing_keys)} model keys when loading checkpoint (e.g. {missing_keys[:2]})")
-    eval_data_protein = read_data(args.protein_path)
-    print('Model loaded successfully. Starting generation...')
+    model = Token3D(pretrain_path='./Pretrained_model', config=Ada_config)
+
+    param_dict = {key.replace("module.", ""): value for key, value in torch.load(model_path, map_location='cuda').items()}
+
+    model.load_state_dict(param_dict)
+    eval_data_protein = read_data(protein_path)
+    
+    print('Model is loaded, now start generation...')
     all_output = []
     # Total number = range * batch size
     for pocket in eval_data_protein:
         one_output = []
         Seq_all = []
         for i in tqdm(range(args.epochs)):
-            Seq_list = predict(model, tokenizer, single_pocket=pocket, batch_size=args.batch_size)
+            Seq_list = predict(model, tokenizer, single_pocket=pocket,batch_size=25)
             Seq_all.extend(Seq_list)
         for j in Seq_all:
             one_output.append(decode(j))

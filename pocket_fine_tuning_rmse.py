@@ -21,8 +21,8 @@ Ada_config = GPT2Config(
     architectures=["GPT2LMHeadModel"],
     model_type="GPT2LMHeadModel",
     vocab_size=836,
-    n_positions=200,
-    n_ctx=200,  # max length
+    n_positions=380,
+    n_ctx=380,  # max length
     n_embd=768,
     n_layer=12,
     n_head=8,
@@ -30,7 +30,7 @@ Ada_config = GPT2Config(
     task_specific_params={
         "text-generation": {
             "do_sample": True,
-            "max_length": 200
+            "max_length": 380
         }
     }
 )

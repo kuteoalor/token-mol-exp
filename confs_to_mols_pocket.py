@@ -55,8 +55,8 @@ def read_data(path):
 
 
 if __name__ == '__main__':
-    csv_file = 'candidates_50_8.csv' # Customize file names
-    generate_mol = pd.read_csv(csv_file, header=None).values.reshape(-1, 400).tolist() # reshape to (-1, mols)
+    csv_file = 'output.csv' # Customize file names
+    generate_mol = pd.read_csv(csv_file, header=None).values.reshape(-1, 100).tolist() # reshape to (-1, mols)
     destination = './results'
     output_file = csv_file.replace('csv', 'pkl')
     os.makedirs(destination, exist_ok=True)

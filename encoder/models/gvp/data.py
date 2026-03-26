@@ -205,9 +205,9 @@ class ProteinGraphDataset(data.Dataset):
         u_1 = U[1:-1]
         u_0 = U[2:]
 
-        # Backbone normals (dim=-1 required; default for torch.cross is deprecated)
-        n_2 = _normalize(torch.cross(u_2, u_1, dim=-1), dim=-1)
-        n_1 = _normalize(torch.cross(u_1, u_0, dim=-1), dim=-1)
+        # Backbone normals
+        n_2 = _normalize(torch.cross(u_2, u_1), dim=-1)
+        n_1 = _normalize(torch.cross(u_1, u_0), dim=-1)
 
         # Angle between normals
         cosD = torch.sum(n_2 * n_1, -1)
@@ -248,6 +248,6 @@ class ProteinGraphDataset(data.Dataset):
         n, origin, c = X[:, 0], X[:, 1], X[:, 2]
         c, n = _normalize(c - origin), _normalize(n - origin)
         bisector = _normalize(c + n)
-        perp = _normalize(torch.cross(c, n, dim=-1))
+        perp = _normalize(torch.cross(c, n))
         vec = -bisector * math.sqrt(1 / 3) - perp * math.sqrt(2 / 3)
         return vec 
