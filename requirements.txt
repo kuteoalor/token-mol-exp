@@ -1,0 +1,15 @@
+torch
+rdkit
+transformers
+networkx
+pandas
+scipy
+numpy
+easydict
+lmdb
+pyg_lib
+torch_cluster
+torch_scatter
+torch_sparse
+torch_spline_conv
+biopython
