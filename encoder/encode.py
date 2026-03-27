@@ -7,7 +7,6 @@ from torch_geometric.data import Batch
 from Bio import BiopythonWarning
 from Bio.PDB.PDBParser import PDBParser
 from rdkit import Chem
-
 from utils.feats.protein import get_protein_feature_v2
 from Bio.PDB import NeighborSearch, Selection
 
@@ -146,7 +145,12 @@ if args.center is not None:
 if data is None:
     sys.exit('pocket residues is None, please check the box you choose or the PDB file you upload')
 
-ckpt = torch.load(args.ckpt, map_location=args.device)
+# weights_only=True cannot unpickle EasyDict in ckpt['config'] (SETITEMS is limited to
+# dict/OrderedDict/Counter). Use full unpickle for trusted local checkpoints.
+try:
+    ckpt = torch.load(args.ckpt, map_location=args.device, weights_only=False)
+except TypeError:
+    ckpt = torch.load(args.ckpt, map_location=args.device)
 
 mask = LigandMaskAll()
 composer = Res2AtomComposer(27, ligand_featurizer.feature_dim, ckpt['config'].model.encoder.knn)

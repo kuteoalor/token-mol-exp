@@ -108,11 +108,12 @@ if __name__ == '__main__':
     model_path, protein_path = args.model_path, args.protein_path
 
     tokenizer = ExpressionBertTokenizer.from_pretrained(args.vocab_path)
-    model = Token3D(pretrain_path='./Pretrained_model', config=Ada_config)
+    model = Token3D(config=Ada_config, pretrain_path='./Pretrained_model')  
 
-    param_dict = {key.replace("module.", ""): value for key, value in torch.load(model_path, map_location='cuda').items()}
-
-    model.load_state_dict(param_dict)
+    #param_dict = {key.replace("module.", ""): value for key, value in torch.load(model_path, map_location='cuda').items()}
+    state_dict = torch.load(model_path, map_location='cuda')
+    state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict, strict=False)
     eval_data_protein = read_data(protein_path)
     
     print('Model is loaded, now start generation...')

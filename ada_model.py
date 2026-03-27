@@ -11,55 +11,67 @@ import torch.nn as nn
 from typing import Optional, Tuple, Union
 
 
+# В файле ada_model.py
+from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
+
+
 class CrossSelfAttention(GPT2Attention):
     def __init__(self, config, is_cross_attention=False, layer_idx=None):
-        super().__init__(config, is_cross_attention, layer_idx)
+        super().__init__(config, is_cross_attention=is_cross_attention, layer_idx=layer_idx)
 
     def forward(
-            self,
-            hidden_states: Optional[Tuple[torch.FloatTensor]],
-            layer_past: Optional[Tuple[torch.Tensor]] = None,
-            attention_mask: Optional[torch.FloatTensor] = None,
-            head_mask: Optional[torch.FloatTensor] = None,
-            encoder_hidden_states: Optional[torch.Tensor] = None,
-            encoder_attention_mask: Optional[torch.FloatTensor] = None,
-            use_cache: Optional[bool] = False,
-            output_attentions: Optional[bool] = False,
-    ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
-        # todo speed this module: not do the attention with the cross part (protein part)
+        self,
+        hidden_states,
+        layer_past=None,
+        attention_mask=None,
+        head_mask=None,
+        encoder_hidden_states=None,  # ← protein pocket features
+        encoder_attention_mask=None,
+        use_cache=False,
+        output_attentions=False,
+    ):
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
                 raise ValueError(
                     "If class is used as cross attention, the weights `q_attn` have to be defined. "
                     "Please make sure to instantiate class with `GPT2Attention(..., is_cross_attention=True)`."
                 )
-
+            # Только query из hidden_states (mol), key/value из protein
             query = self.q_attn(hidden_states)
             key, value = self.c_attn(encoder_hidden_states).split(self.split_size, dim=2)
             attention_mask = encoder_attention_mask
         else:
+            # Self-attention
             query, key, value = self.c_attn(hidden_states).split(self.split_size, dim=2)
 
-        query = self._split_heads(query, self.num_heads, self.head_dim)
-        key = self._split_heads(key, self.num_heads, self.head_dim)
-        value = self._split_heads(value, self.num_heads, self.head_dim)
+        # Разделение на головы — делаем вручную (как в новом GPT2Attention)
+        batch_size, seq_len = query.shape[:2]
+        query = query.view(batch_size, seq_len, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        key = key.view(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        value = value.view(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
         if layer_past is not None:
             past_key, past_value = layer_past
             key = torch.cat((past_key, key), dim=-2)
             value = torch.cat((past_value, value), dim=-2)
 
-        if use_cache is True:
+        if use_cache:
             present = (key, value)
         else:
             present = None
 
-        if self.reorder_and_upcast_attn:
-            attn_output, attn_weights = self._upcast_and_reordered_attn(query, key, value, attention_mask, head_mask)
-        else:
-            attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
+        # Скалярное произведение + маска
+        attn_weights = torch.matmul(query, key.transpose(-1, -2)) / (self.head_dim ** 0.5)
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
 
-        attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        attn_weights = self.attn_dropout(attn_weights)
+
+        attn_output = torch.matmul(attn_weights, value)
+        attn_output = attn_output.permute(0, 2, 1, 3).contiguous()
+        attn_output = attn_output.view(batch_size, seq_len, self.embed_dim)
+
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
 
@@ -67,7 +79,7 @@ class CrossSelfAttention(GPT2Attention):
         if output_attentions:
             outputs += (attn_weights,)
 
-        return outputs[0]  # a, present, (attentions)
+        return outputs[0]  # Только тензор, как в оригинальном forward
 
 
 class ResidualBlock(nn.Module):
@@ -118,16 +130,26 @@ class FeedForwardNetwork(nn.Module):
 
 
 class Token3D(nn.Module):
-    def __init__(self, pretrain_path, config):
+    def __init__(self, config, pretrain_path=None):
         super(Token3D, self).__init__()
-        self.mol_model = GPT2LMHeadModel.from_pretrained(pretrain_path)
-        self.CrossSelfAttention = CrossSelfAttention(config=config)
+        if pretrain_path is not None:
+            # Used during pre-training or fine-tuning
+            self.mol_model = GPT2LMHeadModel.from_pretrained(pretrain_path)
+        else:
+            # Used during inference: weights will be loaded from checkpoint
+            self.mol_model = GPT2LMHeadModel(config)
+
+        self.CrossSelfAttention = CrossSelfAttention(
+            config=config,
+        #    is_cross_attention=True,
+        #    layer_idx=0
+        )
         self.up_sample = nn.Linear(256, config.n_embd)
         self.dropout = nn.Dropout(0.1)
         self.protein_adapter_ffn = ResidualBlock(
             layer=FeedForwardNetwork(
                 config.n_embd,
-                config.n_embd // 2,  # NOTE: bottleneck FFN is important
+                config.n_embd // 2,
                 activation_dropout=0.1
             ),
             layer_norm=nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon),
@@ -135,7 +157,6 @@ class Token3D(nn.Module):
         )
         self.ln_1 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         self.ln_2 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
-
         self.ln_f = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
