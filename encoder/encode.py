@@ -15,6 +15,12 @@ from utils.transforms import *
 from utils.misc import load_config, transform_data
 from utils.reconstruct import *
 import sys
+from easydict import EasyDict
+import argparse
+import os
+import pickle
+import numpy as np
+import torch
 
 def read_sdf(file):
     supp = Chem.SDMolSupplier(file)
@@ -122,6 +128,9 @@ parser.add_argument(
 
 args = parser.parse_args()
 config = load_config(args.config)
+runtime_device = args.device
+if str(runtime_device).startswith('cuda') and not torch.cuda.is_available():
+   runtime_device = 'cpu'
 
 # define the model and transform function (process the data again)
 contrastive_sampler = ContrastiveSample()
@@ -147,10 +156,11 @@ if data is None:
 
 # weights_only=True cannot unpickle EasyDict in ckpt['config'] (SETITEMS is limited to
 # dict/OrderedDict/Counter). Use full unpickle for trusted local checkpoints.
+torch.serialization.add_safe_globals([EasyDict])
 try:
-    ckpt = torch.load(args.ckpt, map_location=args.device, weights_only=False)
+    ckpt = torch.load(args.ckpt, map_location=runtime_device, weights_only=False)
 except TypeError:
-    ckpt = torch.load(args.ckpt, map_location=args.device)
+    ckpt = torch.load(args.ckpt, map_location=runtime_device)
 
 mask = LigandMaskAll()
 composer = Res2AtomComposer(27, ligand_featurizer.feature_dim, ckpt['config'].model.encoder.knn)
@@ -168,7 +178,7 @@ model = ResGen(
     num_bond_types = 3,
     protein_res_feature_dim = (27,3),
     ligand_atom_feature_dim = (13,1),
-).to(args.device)
+).to(runtime_device)
 
 model.load_state_dict(ckpt['model'])
 
@@ -205,11 +215,11 @@ with torch.no_grad():
     os.makedirs(root, exist_ok=True)
     val_list = []
     batch = Batch.from_data_list([data], follow_batch=[])  # batch only contains one data
-    batch = batch.to(args.device)
+    batch = batch.to(runtime_device)
     protein_input = []
     mols_input = []
 
-    batch = batch.to(args.device)
+    batch = batch.to(runtime_device)
 
     ''' 
     protein_represent只使用了self.protein_res_emb来得到protein的embedding
