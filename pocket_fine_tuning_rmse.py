@@ -222,10 +222,10 @@ if __name__ == '__main__':
 
     save_path = Path(args.every_step_save_path).parent.mkdir(exist_ok=True)
 
-    protein_matrix = read_data('./content/data_ft/train_protein_represent.pkl')
-    mol_data = read_data('./content/data_ft/mol_input.pkl')
-    eval_protein = read_data('./content/data_ft/val_protein_represent.pkl')
-    eval_mol = read_data('./content/data_ft/val_mol_input.pkl')
+    protein_matrix = read_data('../drive/MyDrive/data_ft/train_protein_represent.pkl')
+    mol_data = read_data('../drive/MyDrive/data_ft/mol_input.pkl')
+    eval_protein = read_data('../drive/MyDrive/data_ft/val_protein_represent.pkl')
+    eval_mol = read_data('../drive/MyDrive/data_ft/val_mol_input.pkl')
 
     model = Token3D(pretrain_path=args.model_path, config=Ada_config)
 

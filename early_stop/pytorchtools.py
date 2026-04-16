@@ -26,7 +26,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_score = 100
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        self.val_loss_min = np.inf
         self.delta = delta
 
     def __call__(self, val_loss, model, model_name):
