@@ -38,10 +38,10 @@ Ada_config = GPT2Config(
 
 def setup_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_path', default="Pretrained_model", type=str, help='')
+    parser.add_argument('--model_path', default="./Pretrained_model", type=str, help='')
     parser.add_argument('--vocab_path', default="./data/torsion_version/torsion_voc_pocket.csv", type=str, help='')
-    parser.add_argument('--every_step_save_path', default="Trained_model/pocket_generation", type=str, help='')
-    parser.add_argument('--early_stop_path', default="Trained_model/pocket_generation", type=str, help='')
+    parser.add_argument('--every_step_save_path', default="./Trained_model/pocket_generation", type=str, help='')
+    parser.add_argument('--early_stop_path', default="./Trained_model/pocket_generation", type=str, help='')
     parser.add_argument('--batch_size', default=32, type=int, required=False, help='batch size')
     parser.add_argument('--epochs', default=100, type=int, required=False, help='epochs')
     parser.add_argument('--warmup_steps', default=20000, type=int, required=False, help='warm up steps')
@@ -222,10 +222,10 @@ if __name__ == '__main__':
 
     save_path = Path(args.every_step_save_path).parent.mkdir(exist_ok=True)
 
-    protein_matrix = read_data('./data/train_protein_represent.pkl')
-    mol_data = read_data('./data/mol_input.pkl')
-    eval_protein = read_data('./data/val_protein_represent.pkl')
-    eval_mol = read_data('./data/val_mol_input.pkl')
+    protein_matrix = read_data('./content/data_ft/train_protein_represent.pkl')
+    mol_data = read_data('./content/data_ft/mol_input.pkl')
+    eval_protein = read_data('./content/data_ft/val_protein_represent.pkl')
+    eval_mol = read_data('./content/data_ft/val_mol_input.pkl')
 
     model = Token3D(pretrain_path=args.model_path, config=Ada_config)
 
